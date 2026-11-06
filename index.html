@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VIP MDC Admin</title><meta name="robots" content="noindex">
+<link rel="stylesheet" href="/css/style.css">
+<style>
+.wrap{width:min(1100px,95%);margin:24px auto}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin:18px 0}
+.tabs button{background:#121820;color:#b9c1cb;border:1px solid #252f3b;padding:9px 16px;border-radius:9px;cursor:pointer;font-size:14px}
+.tabs button.on{border-color:#25d366;color:#6ff39b}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{text-align:left;padding:10px 8px;border-bottom:1px solid #202833;vertical-align:middle}
+th{color:#747e89;font-weight:600}
+.scroll{overflow-x:auto}
+.row-actions button{margin:2px;padding:5px 10px;border-radius:7px;border:1px solid #2c3745;background:#0b0f14;color:#fff;cursor:pointer;font-size:12px}
+.row-actions .go{border-color:#25d366;color:#6ff39b}.row-actions .del{color:#ff8a8a}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:20px}
+.grid label{margin:0 0 4px}
+.stat{display:flex;gap:14px;margin-bottom:10px;flex-wrap:wrap}.stat div{background:#121820;border:1px solid #252f3b;border-radius:12px;padding:12px 18px}.stat b{display:block;font-size:24px;color:#6ff39b}
+.status{font-size:12px;padding:3px 9px;border-radius:20px;background:#252f3b}.status.active{background:#173322;color:#6ff39b}.status.pending{background:#3a3217;color:#ffd666}
+</style></head><body>
+<div class="wrap">
+<div id="login"><form class="box" id="login-form" style="margin-top:80px"><h2>Admin login</h2>
+<label for="pw">Password</label><input id="pw" type="password" required autocomplete="current-password">
+<button class="btn" type="submit">Log in</button><div id="login-msg"></div></form></div>
+
+<div id="app" class="hidden">
+<div style="display:flex;justify-content:space-between;align-items:center"><div class="logo">VIP <span>MDC</span> Admin</div><button class="btn ghost" id="out" style="padding:8px 16px;font-size:13px">Log out</button></div>
+<div class="stat" id="stats"></div>
+<div class="tabs" id="tabs"><button data-t="subs" class="on">Subscribers</button><button data-t="preds">Predictions</button><button data-t="pkgs">Packages</button><button data-t="sets">Settings</button></div>
+<div id="view"></div>
+</div></div>
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let token=sessionStorage.getItem('adm'),tab='subs',editing=null;
+async function api(url,method='GET',body){
+  const r=await fetch(url,{method,headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:body?JSON.stringify(body):undefined});
+  const d=await r.json().catch(()=>({}));
+  if(r.status===401&&url!=='/api/admin/login'){sessionStorage.removeItem('adm');location.reload()}
+  if(!r.ok)throw new Error(d.error||'Failed');return d}
+const toast=m=>alert(m);
+async function start(){
+  $('#login').classList.add('hidden');$('#app').classList.remove('hidden');
+  const o=await api('/api/admin/overview');
+  $('#stats').innerHTML=`<div><b>${o.pending}</b>Pending</div><div><b>${o.active}</b>Active members</div><div><b>${o.predictions}</b>Predictions</div>`;
+  render()}
+$('#login-form').onsubmit=async e=>{e.preventDefault();
+  try{const r=await fetch('/api/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:$('#pw').value})});
+  const d=await r.json();if(!r.ok)throw new Error(d.error);token=d.token;sessionStorage.setItem('adm',token);start()}
+  catch(err){$('#login-msg').innerHTML=`<div class="msg err">${esc(err.message)}</div>`}};
+$('#out').onclick=async()=>{try{await api('/api/admin/logout','POST')}catch{}sessionStorage.removeItem('adm');location.reload()};
+$('#tabs').onclick=e=>{const b=e.target.closest('button');if(!b)return;tab=b.dataset.t;editing=null;document.querySelectorAll('#tabs button').forEach(x=>x.classList.toggle('on',x===b));render()};
+async function render(){({subs,preds,pkgs,sets})[tab]()}
+const today=()=>new Date().toISOString().slice(0,10);
+
+async function subs(){
+  const l=await api('/api/admin/subscribers');
+  $('#view').innerHTML=`<div class="scroll"><table><tr><th>Name</th><th>Phone</th><th>Package</th><th>Ref</th><th>Status</th><th>Code</th><th>Expires</th><th></th></tr>`+
+  (l.map(s=>`<tr><td>${esc(s.name)}</td><td>${esc(s.phone)}</td><td>${esc(s.package)}</td><td>${esc(s.reference)}</td><td><span class="status ${s.status}">${s.status}</span></td><td><b>${esc(s.code||'')}</b></td><td>${esc(s.expires_at||'')}</td>
+  <td class="row-actions">${s.status==='active'?'':`<button class="go" onclick="appr(${s.id})">Approve</button>`}${s.status==='active'?`<button class="go" onclick="appr(${s.id})">Renew</button>`:''}${s.status==='pending'?`<button onclick="rej(${s.id})">Reject</button>`:''}<button class="del" onclick="delSub(${s.id})">Delete</button></td></tr>`).join('')||'<tr><td colspan=8 class="empty">No subscribers yet.</td></tr>')+`</table></div>`}
+async function appr(id){const r=await api(`/api/admin/subscribers/${id}/approve`,'POST',{});toast(`Approved. Access code: ${r.code}\nValid until ${r.expires_at}\nSend the code to the customer on WhatsApp.`);start()}
+async function rej(id){await api(`/api/admin/subscribers/${id}/reject`,'POST');start()}
+async function delSub(id){if(confirm('Delete this subscriber?')){await api('/api/admin/subscribers/'+id,'DELETE');start()}}
+
+async function preds(){
+  const l=await api('/api/admin/predictions');const e=editing||{match_date:today(),tier:1,result:'pending'};
+  const f=(k,l,t='text',x='')=>`<div><label>${l}</label><input name="${k}" type="${t}" value="${esc(e[k])}" ${x}></div>`;
+  const sel=(k,l,o)=>`<div><label>${l}</label><select name="${k}">${o.map(([v,n])=>`<option value="${v}" ${e[k]==v?'selected':''}>${n}</option>`).join('')}</select></div>`;
+  $('#view').innerHTML=`<form class="box" style="max-width:none;margin-bottom:24px" id="pf"><div class="grid">${f('match_date','Date','date','required')}${f('league','League')}${f('home','Home team','text','required')}${f('away','Away team','text','required')}${f('tip','Tip','text','required placeholder="Over 2.5"')}${f('odds','Odds','number','step="0.01"')}
+  ${sel('tier','Visible to',[[0,'Everyone (free)'],[1,'Basic and above'],[2,'Premium and above'],[3,'Pro only']])}${sel('result','Result',[['pending','Pending'],['won','Won'],['lost','Lost'],['void','Void']])}</div>
+  <button class="btn" style="width:auto;margin:0" type="submit">${editing?'Save changes':'Add prediction'}</button> ${editing?'<button class="btn ghost" type="button" onclick="editing=null;preds()" style="margin-left:8px">Cancel</button>':''}</form>
+  <div class="scroll"><table><tr><th>Date</th><th>Match</th><th>Tip</th><th>Odds</th><th>Tier</th><th>Result</th><th></th></tr>`+
+  l.map(p=>`<tr><td>${p.match_date}</td><td>${esc(p.home)} vs ${esc(p.away)}<br><small style="color:#747e89">${esc(p.league)}</small></td><td>${esc(p.tip)}</td><td>${p.odds??''}</td><td>${p.tier||'Free'}</td><td>${p.result}</td>
+  <td class="row-actions"><button onclick='editP(${JSON.stringify(p).replace(/'/g,"&#39;")})'>Edit</button><button class="go" onclick="setR(${p.id},'won')">Won</button><button class="del" onclick="setR(${p.id},'lost')">Lost</button><button class="del" onclick="delP(${p.id})">Delete</button></td></tr>`).join('')+`</table></div>`;
+  window._preds=l;
+  $('#pf').onsubmit=async ev=>{ev.preventDefault();const b=Object.fromEntries(new FormData(ev.target));
+    try{await api(editing?'/api/admin/predictions/'+editing.id:'/api/admin/predictions',editing?'PUT':'POST',b);editing=null;start()}catch(er){toast(er.message)}}}
+function editP(p){editing=p;preds();scrollTo(0,0)}
+async function setR(id,r){const p=window._preds.find(x=>x.id===id);await api('/api/admin/predictions/'+id,'PUT',{...p,result:r});start()}
+async function delP(id){if(confirm('Delete this prediction?')){await api('/api/admin/predictions/'+id,'DELETE');start()}}
+
+async function pkgs(){
+  const l=await api('/api/admin/packages');
+  $('#view').innerHTML=l.map(p=>`<form class="box pk" style="max-width:none;margin-bottom:14px" data-id="${p.id}"><div class="grid">
+  <div><label>Name</label><input name="name" value="${esc(p.name)}" required></div><div><label>Price (₦)</label><input name="price" type="number" min="0" value="${p.price}"></div>
+  <div><label>Days of access</label><input name="duration_days" type="number" min="1" value="${p.duration_days}"></div>
+  <div style="grid-column:span 2"><label>Description</label><input name="description" value="${esc(p.description)}"></div>
+  <div><label>Active</label><select name="active"><option value="1" ${p.active?'selected':''}>Yes</option><option value="" ${p.active?'':'selected'}>Hidden</option></select></div></div>
+  <button class="btn" style="width:auto;margin:0" type="submit">Save ${esc(p.name)}</button></form>`).join('');
+  document.querySelectorAll('.pk').forEach(f=>f.onsubmit=async e=>{e.preventDefault();await api('/api/admin/packages/'+f.dataset.id,'PUT',Object.fromEntries(new FormData(f)));toast('Saved.')})}
+
+async function sets(){
+  const s=await api('/api/admin/settings');
+  const f=(k,l,h='')=>`<label>${l}</label><input name="${k}" value="${esc(s[k])}" placeholder="${h}">`;
+  $('#view').innerHTML=`<form class="box" id="sf">${f('whatsapp','WhatsApp number (with country code)','2348012345678')}${f('promo','Promo banner (shown at top of site)')}${f('bank_name','Bank name')}${f('account_name','Account name')}${f('account_number','Account number')}<button class="btn" type="submit">Save settings</button></form>`;
+  $('#sf').onsubmit=async e=>{e.preventDefault();await api('/api/admin/settings','PUT',Object.fromEntries(new FormData(e.target)));toast('Saved.')}}
+if(token)start().catch(()=>{});
+</script></body></html>
